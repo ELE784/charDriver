@@ -109,10 +109,10 @@ static void __exit charDriver_exit(void)
 
 static int charDriver_open(struct inode *inode, struct file *flip)
 {
-  struct charDriverDev *dev;
+  //struct charDriverDev *dev;
 
-  dev = container_of(inode->i_cdev, struct charDriverDev, cdev);
-  flip->private_data = dev;
+  //dev = container_of(inode->i_cdev, struct charDriverDev, cdev);
+  //flip->private_data = dev;
 
   printk(KERN_ALERT "charDriver is open\n");
   return 0;

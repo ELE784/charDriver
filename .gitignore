@@ -1,9 +1,12 @@
-# Compiled source #
-###################
-*.class
-*.o
-*.ko
-*.mod.c
-*.mod.o
-*.o.cmd
+# Ignore everything
+*
 
+# But not these files
+!.gitignore
+!charDriver.c
+!circularBuffer.c
+!circularBuffer.h
+!script_lab1
+
+# ...even if they are in subdirectories
+!*/
