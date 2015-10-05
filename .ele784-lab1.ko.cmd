@@ -1,0 +1,1 @@
+cmd_/home/bullshark/C++_workspace/ele784-lab1/ele784-lab1.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /home/bullshark/C++_workspace/ele784-lab1/ele784-lab1.ko /home/bullshark/C++_workspace/ele784-lab1/ele784-lab1.o /home/bullshark/C++_workspace/ele784-lab1/ele784-lab1.mod.o

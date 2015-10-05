@@ -1,0 +1,23 @@
+#!/bin/bash
+# Script to install and change permission of the ELE784-Lab1 module
+
+if [ "$1" == "" ]; then
+	sudo insmod ./ele784-lab1.ko
+	sudo chmod 666 /dev/charDriver_Node
+fi
+
+while [ "$1" != "" ]; do
+	case $1 in
+		-q | --quit )	shift
+				sudo rmmod ele784_lab1
+				;;
+		-r | --read )	shift
+				sudo cat /dev/charDriver_Node
+				;;
+		-w | --write ) 	shift
+				sudo echo "charDriver" > /dev/charDriver_Node
+				;; 
+	esac
+done
+
+
