@@ -1,0 +1,9 @@
+# Compiled source #
+###################
+*.class
+*.o
+*.ko
+*.mod.c
+*.mod.o
+*.o.cmd
+
