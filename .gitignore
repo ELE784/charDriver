@@ -7,6 +7,7 @@
 !circularBuffer.c
 !circularBuffer.h
 !script_lab1
+!charDriverProgram.c
 
 # ...even if they are in subdirectories
 !*/
