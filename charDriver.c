@@ -42,7 +42,7 @@ static long charDriver_ioctl(struct file *flip, unsigned int cmd, unsigned long 
 
 dev_t devNumber;
 struct class *charDriver_class;
-struct cdev charDriver_cdev;
+struct cdev etsele_cdev;
 static char buffer[MAX_LENGTH];
 
 // Driver internal management struct
@@ -66,6 +66,9 @@ static struct file_operations charDriver_fops = {
     .unlocked_ioctl = charDriver_ioctl,
 };
 
+struct charDriverDev *charDriver;
+struct Buffer_t *myBuffer;
+
 // Init and Exit functions
 module_init(charDriver_init);
 module_exit(charDriver_exit);
@@ -74,26 +77,36 @@ static int __init charDriver_init(void)
 {
   int result;
 
-  result = alloc_chrdev_region(&devNumber, 0, 1, "charDriverDev");
+  result = alloc_chrdev_region(&devNumber, 0, 1, "etsele_cdev");
   if (result < 0)
     printk(KERN_WARNING"charDriver ERROR IN alloc_chrdev_region (%s:%s:%u)\n", __FILE__, __FUNCTION__, __LINE__);
   else
     printk(KERN_WARNING"charDriver : MAJOR = %u MINOR = %u\n", MAJOR(devNumber), MINOR(devNumber));
 
+  charDriver = kmalloc(sizeof(struct etsele_cdev), GFP_KERNEL);
+  if(!charDriver)
+  {
+    result = -12;
+    goto fail;  /* Make this more graceful */
+  }
+
   charDriver_class = class_create(THIS_MODULE, "charDriverClass");
-  device_create(charDriver_class, NULL, devNumber, NULL, "charDriver_Node");
-  cdev_init(&charDriver_cdev, &charDriver_fops);
-  charDriver_cdev.owner = THIS_MODULE;
-  if (cdev_add(&charDriver_cdev, devNumber, 1) < 0)
+  device_create(charDriver_class, NULL, devNumber, NULL, "etsele_cdev");
+  cdev_init(&etsele_cdev, &charDriver_fops);
+  etsele_cdev.owner = THIS_MODULE;
+  if (cdev_add(&etsele_cdev, devNumber, 1) < 0)
     printk(KERN_WARNING"charDriver ERROR IN cdev_add (%s:%s:%u)\n", __FILE__, __FUNCTION__, __LINE__);
 
   return 0;
+
+  fail:
+  charDriver_exit();
 }
 
 
 static void __exit charDriver_exit(void)
 {
-  cdev_del(&charDriver_cdev);
+  cdev_del(&etsele_cdev);
   unregister_chrdev_region(devNumber, 1);
   device_destroy (charDriver_class, devNumber);
   class_destroy(charDriver_class);
@@ -109,6 +122,12 @@ static int charDriver_open(struct inode *inode, struct file *flip)
   dev = container_of(inode->i_cdev, struct charDriverDev, cdev);
   flip->private_data = dev;
 
+  if(down_interruptible(&charDriver->SemBuf))
+    return -ERESTARTSYS;
+  myBuffer = circularBufferInit(CIRCULAR_BUFFER_SIZE);
+
+  up(&charDriver->SemBuf);
+
   printk(KERN_ALERT "charDriver is open\n");
   return 0;
 }
@@ -123,7 +142,7 @@ static int charDriver_release(struct inode *inode, struct file *flip)
 
 static ssize_t charDriver_read(struct file *flip, char __user *ubuf, size_t count, loff_t *f_ops)
 {
-  //struct charDriverDev *dev = flip->private_data;
+  //struct etsele_cdev *dev = flip->private_data;
 
   int maxBytes;
   int nbBytesToRead;

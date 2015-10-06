@@ -4,7 +4,7 @@
 
 if [ "$1" == "" ]; then
 	sudo insmod ./ele784-lab1.ko
-	sudo chmod 666 /dev/charDriver_Node
+	sudo chmod 666 /dev/etsele_cdev
 fi
 
 while [ "$1" != "" ]; do
@@ -13,10 +13,10 @@ while [ "$1" != "" ]; do
 				sudo rmmod ele784_lab1
 				;;
 		-r | --read )	shift
-				sudo cat /dev/charDriver_Node
+				sudo cat /dev/etsele_cdev
 				;;
 		-w | --write ) 	shift
-				sudo echo "charDriver" > /dev/charDriver_Node
+				sudo echo "charDriver" > /dev/etsele_cdev
 				;; 
 	esac
 done
