@@ -8,6 +8,7 @@
 !circularBuffer.h
 !script_lab1
 !charDriverProgram.c
+!Makefile
 
 # ...even if they are in subdirectories
 !*/

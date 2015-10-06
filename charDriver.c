@@ -46,7 +46,7 @@ struct cdev charDriver_cdev;
 static char buffer[MAX_LENGTH];
 
 // Driver internal management struct
-typedef struct {
+typedef struct charDriverDev {
   char *ReadBuf;
   char *WriteBuf;
   struct semaphore SemBuf;
@@ -54,7 +54,7 @@ typedef struct {
   unsigned short numReader;
   dev_t dev;
   struct cdev cdev;
-} charDriverDev;
+};
 
 // Driver handled file operations
 static struct file_operations charDriver_fops = {
@@ -70,9 +70,6 @@ static struct file_operations charDriver_fops = {
 module_init(charDriver_init);
 module_exit(charDriver_exit);
 
-
-
-
 static int __init charDriver_init(void)
 {
   int result;
@@ -82,8 +79,6 @@ static int __init charDriver_init(void)
     printk(KERN_WARNING"charDriver ERROR IN alloc_chrdev_region (%s:%s:%u)\n", __FILE__, __FUNCTION__, __LINE__);
   else
     printk(KERN_WARNING"charDriver : MAJOR = %u MINOR = %u\n", MAJOR(devNumber), MINOR(devNumber));
-
-
 
   charDriver_class = class_create(THIS_MODULE, "charDriverClass");
   device_create(charDriver_class, NULL, devNumber, NULL, "charDriver_Node");
@@ -109,10 +104,10 @@ static void __exit charDriver_exit(void)
 
 static int charDriver_open(struct inode *inode, struct file *flip)
 {
-  //struct charDriverDev *dev;
+  struct charDriverDev *dev;
 
-  //dev = container_of(inode->i_cdev, struct charDriverDev, cdev);
-  //flip->private_data = dev;
+  dev = container_of(inode->i_cdev, struct charDriverDev, cdev);
+  flip->private_data = dev;
 
   printk(KERN_ALERT "charDriver is open\n");
   return 0;
@@ -128,7 +123,8 @@ static int charDriver_release(struct inode *inode, struct file *flip)
 
 static ssize_t charDriver_read(struct file *flip, char __user *ubuf, size_t count, loff_t *f_ops)
 {
-  struct charDriverDev *dev = flip->private_data;
+  //struct charDriverDev *dev = flip->private_data;
+
   int maxBytes;
   int nbBytesToRead;
   int nbBytesLeft;
