@@ -10,15 +10,15 @@
 #include <linux/init.h>
 #include <linux/cdev.h>
 #include <linux/fs.h>
-#include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
 #include <uapi/asm-generic/errno-base.h>
+#include <uapi/asm-generic/fcntl.h>
 #include <linux/fcntl.h>
 #include <linux/wait.h>
 #include <linux/spinlock.h>
+#include <linux/semaphore.h>
 #include <linux/device.h>
-#include <asm/atomic.h>
 #include <asm/uaccess.h>
 #include "circularBuffer.h"
 #include "charDriver.h"
@@ -31,15 +31,6 @@
 // Module Information
 MODULE_AUTHOR("Francis Masse, Alexandre Leblanc");
 MODULE_LICENSE("Dual BSD/GPL");
-
-// Prototypes
-static int __init charDriver_init(void);
-static void __exit charDriver_exit(void);
-static int charDriver_open(struct inode *inode, struct file *flip);
-static int charDriver_release(struct inode *inode, struct file *flip);
-static ssize_t charDriver_read(struct file *flip, char __user *ubuf, size_t count, loff_t *f_ops);
-static ssize_t charDriver_write(struct file *flip, const char __user *ubuf, size_t count, loff_t *f_ops);
-static long charDriver_ioctl(struct file *flip, unsigned int cmd, unsigned long arg);
 
 dev_t devNumber;
 struct class *charDriver_class;
@@ -56,12 +47,12 @@ static struct file_operations charDriver_fops = {
     .unlocked_ioctl = charDriver_ioctl,
 };
 
-charDriverDev *charDriver;
+struct charDriverDev *charDriver;
 struct Buffer_t *myBuffer;
 
-// Init and Exit functions
-module_init(charDriver_init);
-module_exit(charDriver_exit);
+/*
+ *  Init and Release
+ */
 
 static int __init charDriver_init(void)
 {
@@ -73,6 +64,24 @@ static int __init charDriver_init(void)
   else
     printk(KERN_WARNING"charDriver : MAJOR = %u MINOR = %u\n", MAJOR(devNumber), MINOR(devNumber));
 
+  charDriver = kmalloc(sizeof(struct charDriverDev), GFP_KERNEL);
+  if (!charDriver)
+  {
+    result = -ENOMEM;
+    goto fail;
+  }
+
+  memset(charDriver, 0, sizeof(struct charDriverDev));
+
+  charDriver->ReadBuf[READWRITE_BUFSIZE] = 0;
+  charDriver->WriteBuf[READWRITE_BUFSIZE] = 0;
+  charDriver->numReader = 0;
+  atomic_set(&charDriver->numWriter, 1);
+  charDriver->dev = devNumber;
+  sema_init(&charDriver->SemBuf, 1);
+
+  myBuffer = circularBufferInit(CIRCULAR_BUFFER_SIZE);
+
   charDriver_class = class_create(THIS_MODULE, "charDriverClass");
   device_create(charDriver_class, NULL, devNumber, NULL, "etsele_cdev");
   cdev_init(&etsele_cdev, &charDriver_fops);
@@ -81,46 +90,115 @@ static int __init charDriver_init(void)
     printk(KERN_WARNING"charDriver ERROR IN cdev_add (%s:%s:%u)\n", __FILE__, __FUNCTION__, __LINE__);
 
   return 0;
-}
 
+  fail:
+  charDriver_exit();
+  return result;
+}
 
 static void __exit charDriver_exit(void)
 {
+  if(charDriver)
+  {
   cdev_del(&etsele_cdev);
-  unregister_chrdev_region(devNumber, 1);
   device_destroy (charDriver_class, devNumber);
   class_destroy(charDriver_class);
+  charDriver->ReadBuf = 0;
+  charDriver->WriteBuf = 0;
+  charDriver->numReader = 0;
+  kfree(charDriver);
+  }
+
+  circularBufferDelete(myBuffer);
+
+  unregister_chrdev_region(devNumber, 1);
 
   printk(KERN_ALERT "charDriver have successfully exited\n");
+
 }
 
+/*
+ *  Open and Close
+ */
 
-static int charDriver_open(struct inode *inode, struct file *flip)
+static int charDriver_open(struct inode *inode, struct file *filp)
 {
-  charDriverDev *dev;
+  struct charDriverDev *dev;
 
-  dev = container_of(inode->i_cdev, charDriverDev, cdev);
-  flip->private_data = dev;
+  dev = container_of(inode->i_cdev, struct charDriverDev, cdev);
+  filp->private_data = dev;
 
-  if(down_interruptible(&dev->SemBuf))
-    return -ERESTARTSYS;
-  myBuffer = circularBufferInit(CIRCULAR_BUFFER_SIZE);
+  if((filp->f_flags & O_ACCMODE) == O_WRONLY || O_RDWR)
+  {
+    printk(KERN_ALERT "charDriver try to open as a writer\n");
+    if(down_interruptible(&dev->SemBuf))
+      return -ERESTARTSYS;
+    if(!atomic_dec_and_test(&dev->numWriter))
+      goto fail;
+    up(&dev->SemBuf);
+    printk(KERN_ALERT "charDriver is open as a writer\n");
+  }
 
+  if((filp->f_flags & O_ACCMODE) == O_RDONLY)
+  {
+    printk(KERN_ALERT "charDriver try to open as a reader\n");
+    if(down_interruptible(&dev->SemBuf))
+      return -ERESTARTSYS;
+    if(atomic_dec_and_test(&dev->numWriter))
+    {
+      atomic_inc(&dev->numWriter);
+      ++dev->numReader;
+      printk(KERN_ALERT "charDriver is open as a reader\n");
+    }
+    else
+      goto fail;
+    up(&dev->SemBuf);
+  }
+
+  return 0;
+
+  fail:
   up(&dev->SemBuf);
+  printk(KERN_ALERT "fail to open charDriver\n");
+  return -ENOTTY;
 
-  printk(KERN_ALERT "charDriver is open\n");
-  return 0;
 }
 
-
-static int charDriver_release(struct inode *inode, struct file *flip)
+static int charDriver_release(struct inode *inode, struct file *filp)
 {
-  printk(KERN_ALERT "charDriver is release\n");
+  struct charDriverDev *dev;
+
+  dev = container_of(inode->i_cdev, struct charDriverDev, cdev);
+  filp->private_data = dev;
+
+  if((filp->f_flags & O_ACCMODE) == O_WRONLY || O_RDWR)
+  {
+    printk(KERN_ALERT "charDriver try to release as a writer\n");
+    if(down_interruptible(&dev->SemBuf))
+      return -ERESTARTSYS;
+    atomic_inc(&dev->numWriter);
+    up(&dev->SemBuf);
+    printk(KERN_ALERT "charDriver have release as a writer\n");
+  }
+
+  if((filp->f_flags & O_ACCMODE) == O_RDONLY)
+  {
+    printk(KERN_ALERT "charDriver try to release as a reader\n");
+    if(down_interruptible(&dev->SemBuf))
+      return -ERESTARTSYS;
+    --dev->numReader;
+    up(&dev->SemBuf);
+    printk(KERN_ALERT "charDriver have release as a reader\n");
+  }
+
   return 0;
 }
 
+/*
+ * Data management: read and write
+ */
 
-static ssize_t charDriver_read(struct file *flip, char __user *ubuf, size_t count, loff_t *f_ops)
+static ssize_t charDriver_read(struct file *filp, char __user *ubuf, size_t count, loff_t *f_ops)
 {
   //struct etsele_cdev *dev = flip->private_data;
 
@@ -149,8 +227,7 @@ static ssize_t charDriver_read(struct file *flip, char __user *ubuf, size_t coun
   return nbBytesLeft;
 }
 
-
-static ssize_t charDriver_write(struct file *flip, const char __user *ubuf, size_t count, loff_t *f_ops)
+static ssize_t charDriver_write(struct file *filp, const char __user *ubuf, size_t count, loff_t *f_ops)
 {
   int nbBytesLeft;
   int nbBytesToWrite;
@@ -178,8 +255,15 @@ static ssize_t charDriver_write(struct file *flip, const char __user *ubuf, size
   return nbBytesLeft;
 }
 
+/*
+ * The ioctl() implementation
+ */
 
-static long charDriver_ioctl(struct file *flip, unsigned int cmd, unsigned long arg)
+static long charDriver_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
   return 0;
 }
+
+// Init and Exit functions
+module_init(charDriver_init);
+module_exit(charDriver_exit);
