@@ -13,15 +13,29 @@
 #include <linux/types.h>
 
 // Driver internal management struct
-struct charDriverDev {
-  char *ReadBuf;
-  char *WriteBuf;
+typedef struct {
+
+  // Read & Write intermediate buffers
+  char *readBuffer;
+  char *writeBuffer;
+  struct semaphore bufferSem;
+
+  // User count
+  struct semaphore countSem;
   atomic_t numWriter;
   unsigned short numReader;
+
+  // Circular buffer
+  BufferHandle_t cirBuffer;
+  wait_queue_head_t readWq;
+  wait_queue_head_t writeWq;
+
+  // Linux module
+  struct device* device;
+  struct class* class;
   dev_t dev;
-  struct semaphore SemBuf;
   struct cdev cdev;
-};
+} charDriverDev;
 
 // Prototypes
 static int __init charDriver_init(void);
