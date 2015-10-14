@@ -12,9 +12,10 @@
 #include <asm/atomic.h>
 #include <linux/types.h>
 
-// Driver internal management struct
-typedef struct {
+#define initReader 0
 
+// Driver internal management struct
+struct charDriverDev {
   // Read & Write intermediate buffers
   char *readBuffer;
   char *writeBuffer;
@@ -35,7 +36,7 @@ typedef struct {
   struct class* class;
   dev_t dev;
   struct cdev cdev;
-} charDriverDev;
+};
 
 // Prototypes
 static int __init charDriver_init(void);
