@@ -7,25 +7,15 @@
 
 int main()
 {
-  char bufferOut[16] = "My charDriver";
-  char bufferIn[16];
   int charDriver;
+  int charDriver2;
   int ret;
   
-  charDriver = open("/dev/charDriver_Node", O_RDWR);
-
-  ret = write(charDriver, bufferOut, 16);
-
-  if(ret == 16)
-  {    
-    printf("Write is completed and ret = %d\n", ret);
-    ret = read(charDriver, bufferIn, 1);
-    printf("Read ret = %d\n", ret);
-  }
-  else
-    printf("Error ret = %d\n", ret);
+  charDriver = open("/dev/etsele_cdev", O_RDONLY);
+  charDriver2 = open("/dev/etsele_cdev", O_RDONLY);
 
   close(charDriver);
+  close(charDriver2);
 
 	return ret;
 }

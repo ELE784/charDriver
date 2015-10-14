@@ -12,7 +12,10 @@
 #include <asm/atomic.h>
 #include <linux/types.h>
 
-#define initReader 0
+int charDriverMajor;
+int charDriverMinor;
+int numDevices;
+struct class *charDriverClass;
 
 // Driver internal management struct
 struct charDriverDev {
@@ -36,7 +39,7 @@ struct charDriverDev {
   struct class* class;
   dev_t dev;
   struct cdev cdev;
-};
+} charDriver;
 
 // Prototypes
 static int __init charDriver_init(void);
