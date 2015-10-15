@@ -39,7 +39,7 @@ struct charDriverDev {
   struct class* class;
   dev_t dev;
   struct cdev cdev;
-} charDriver;
+};
 
 // Prototypes
 static int __init charDriver_init(void);

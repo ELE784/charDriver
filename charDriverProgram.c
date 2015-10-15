@@ -9,13 +9,15 @@ int main()
 {
   int charDriver;
   int charDriver2;
+  char bufferOut[8] = "Francis";
+  char bufferIn[8];
   int ret;
   
-  charDriver = open("/dev/etsele_cdev", O_RDONLY);
-  charDriver2 = open("/dev/etsele_cdev", O_RDONLY);
-
+  charDriver = open("/dev/etsele_cdev", O_WRONLY);
+  
+  ret = write(charDriver, bufferOut, 8); 
+  
   close(charDriver);
-  close(charDriver2);
 
 	return ret;
 }

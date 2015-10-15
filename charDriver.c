@@ -39,7 +39,6 @@
 MODULE_AUTHOR("Francis Masse, Alexandre Leblanc");
 MODULE_LICENSE("Dual BSD/GPL");
 
-char buffer[MAX_LENGTH];
 dev_t devNumber;
 
 // Driver handled file operations
@@ -52,6 +51,8 @@ static struct file_operations charDriver_fops = {
     .unlocked_ioctl = charDriver_ioctl,
 };
 
+static struct charDriverDev charDriver;
+
 /*
  *  Init and Release
  */
@@ -60,14 +61,16 @@ static int __init charDriver_init(void)
 {
   int result;
   int atomicTest =  0;
+  struct device *charDriverDevice;
 
-  result = alloc_chrdev_region(&devNumber, 0, 1, "etsele_cdev");
+  result = alloc_chrdev_region(&devNumber, 0, 1, DEVICE_NAME);
   if (result < 0)
     printk(KERN_WARNING"charDriver ERROR IN alloc_chrdev_region (%s:%s:%u)\n", __FILE__, __FUNCTION__, __LINE__);
   else
     printk(KERN_WARNING"charDriver : MAJOR = %u MINOR = %u\n", MAJOR(devNumber), MINOR(devNumber));
 
   charDriverClass = class_create(THIS_MODULE, "charDriverClass");
+  charDriver.class = charDriverClass;
   if(charDriverClass == NULL)
   {
     printk(KERN_WARNING "Can't create class");
@@ -78,6 +81,16 @@ static int __init charDriver_init(void)
   charDriver.readBuffer = kmalloc(READWRITE_BUFSIZE * sizeof(char), GFP_KERNEL);
   charDriver.writeBuffer = kmalloc(READWRITE_BUFSIZE * sizeof(char), GFP_KERNEL);
 
+  if(charDriver.readBuffer == NULL || charDriver.writeBuffer == NULL)
+  {
+    kfree(charDriver.readBuffer);
+    kfree(charDriver.writeBuffer);
+    charDriver.readBuffer = NULL;
+    charDriver.writeBuffer = NULL;
+    class_destroy(charDriverClass);
+    unregister_chrdev_region(devNumber, 1);
+  }
+
   atomic_set(&charDriver.numWriter, 1);
   atomicTest = atomic_read(&charDriver.numWriter);
   printk(KERN_WARNING "charDriver numWriter = %d\n", atomicTest);
@@ -86,9 +99,11 @@ static int __init charDriver_init(void)
   charDriver.dev = devNumber;
   printk(KERN_WARNING "charDriver dev Major = %d Minor = %d\n", MAJOR(charDriver.dev), MINOR(charDriver.dev));
 
+  charDriver.cirBuffer = circularBufferInit(CIRCULAR_BUFFER_SIZE);
 
+  charDriverDevice = device_create(charDriverClass, NULL, devNumber, NULL, DEVICE_NAME);
+  charDriver.device = charDriverDevice;
 
-  device_create(charDriverClass, NULL, devNumber, NULL, "etsele_cdev");
   cdev_init(&charDriver.cdev, &charDriver_fops);
   charDriver.cdev.owner = THIS_MODULE;
   charDriver.cdev.ops = &charDriver_fops;
@@ -101,6 +116,8 @@ static int __init charDriver_init(void)
   if (cdev_add(&charDriver.cdev, devNumber, 1) < 0)
     printk(KERN_WARNING"charDriver ERROR IN cdev_add (%s:%s:%u)\n", __FILE__, __FUNCTION__, __LINE__);
 
+  printk(KERN_WARNING "Device initialized\n");
+
   return 0;
 }
 
@@ -110,6 +127,7 @@ static void __exit charDriver_exit(void)
   kfree(charDriver.writeBuffer);
   charDriver.readBuffer = NULL;
   charDriver.writeBuffer = NULL;
+  circularBufferDelete(charDriver.cirBuffer);
 
   cdev_del(&charDriver.cdev);
   device_destroy (charDriverClass, devNumber);
@@ -132,22 +150,23 @@ static int charDriver_open(struct inode *inode, struct file *filp)
   dev = container_of(inode->i_cdev, struct charDriverDev, cdev);
   filp->private_data = dev;
 
+  printk(KERN_WARNING "charDriver numReader = %d\n", charDriver.numReader);
 
-  if((filp->f_flags & O_ACCMODE) == O_WRONLY || O_RDWR)
+  if((filp->f_flags & O_ACCMODE) == O_WRONLY)
   {
     printk(KERN_ALERT "charDriver try to open as a writer\n");
-    if(down_interruptible(&dev->bufferSem))
+    if(down_interruptible(&dev->countSem))
       return -ERESTARTSYS;
     if(!atomic_dec_and_test(&dev->numWriter))
       goto fail;
-    up(&dev->bufferSem);
+    up(&dev->countSem);
     printk(KERN_ALERT "charDriver is open as a writer\n");
   }
 
   if((filp->f_flags & O_ACCMODE) == O_RDONLY)
   {
     printk(KERN_ALERT "charDriver try to open as a reader\n");
-    if(down_interruptible(&dev->bufferSem))
+    if(down_interruptible(&dev->countSem))
       return -ERESTARTSYS;
     if(atomic_dec_and_test(&dev->numWriter))
     {
@@ -157,8 +176,22 @@ static int charDriver_open(struct inode *inode, struct file *filp)
     }
     else
       goto fail;
-    up(&dev->bufferSem);
+    up(&dev->countSem);
   }
+
+  if((filp->f_flags & O_ACCMODE) == O_RDWR)
+  {
+    printk(KERN_ALERT "charDriver try to open as a reader/writer\n");
+    if(down_interruptible(&dev->countSem))
+      return -ERESTARTSYS;
+    if(!atomic_dec_and_test(&dev->numWriter))
+      goto fail;
+    ++(dev->numReader);
+    up(&dev->countSem);
+    printk(KERN_ALERT "charDriver is open as a writer\n");
+  }
+
+  printk(KERN_WARNING "charDriver numReader = %d\n", charDriver.numReader);
 
   return 0;
 
@@ -175,25 +208,40 @@ static int charDriver_release(struct inode *inode, struct file *filp)
 
   dev = container_of(inode->i_cdev, struct charDriverDev, cdev);
 
-  if((filp->f_flags & O_ACCMODE) == O_WRONLY || O_RDWR)
+  printk(KERN_WARNING "charDriver numReader = %d\n", charDriver.numReader);
+
+  if((filp->f_flags & O_ACCMODE) == O_WRONLY)
   {
     printk(KERN_ALERT "charDriver try to release as a writer\n");
-    if(down_interruptible(&dev->bufferSem))
+    if(down_interruptible(&dev->countSem))
       return -ERESTARTSYS;
     atomic_inc(&dev->numWriter);
-    up(&dev->bufferSem);
+    up(&dev->countSem);
     printk(KERN_ALERT "charDriver have release as a writer\n");
   }
 
   if((filp->f_flags & O_ACCMODE) == O_RDONLY)
   {
     printk(KERN_ALERT "charDriver try to release as a reader\n");
-    if(down_interruptible(&dev->bufferSem))
+    if(down_interruptible(&dev->countSem))
       return -ERESTARTSYS;
     --(dev->numReader);
-    up(&dev->bufferSem);
+    up(&dev->countSem);
     printk(KERN_ALERT "charDriver have release as a reader\n");
   }
+
+  if((filp->f_flags & O_ACCMODE) == O_RDWR)
+  {
+    printk(KERN_ALERT "charDriver try to release as a reader/writer\n");
+    if(down_interruptible(&dev->countSem))
+      return -ERESTARTSYS;
+    atomic_inc(&dev->numWriter);
+    --(dev->numReader);
+    up(&dev->countSem);
+    printk(KERN_ALERT "charDriver have release as a writer\n");
+  }
+
+  printk(KERN_WARNING "charDriver numReader = %d\n", charDriver.numReader);
 
   return 0;
 }
@@ -202,61 +250,110 @@ static int charDriver_release(struct inode *inode, struct file *filp)
  * Data management: read and write
  */
 
-static ssize_t charDriver_read(struct file *filp, char __user *ubuf, size_t count, loff_t *f_ops)
+static ssize_t charDriver_read(struct file *filp, char __user *ubuf, size_t count, loff_t *offp)
 {
-  //struct etsele_cdev *dev = flip->private_data;
+  struct charDriverDev *dev = filp->private_data;
 
-  int maxBytes;
-  int nbBytesToRead;
-  int nbBytesLeft;
+  size_t maxBytes = READWRITE_BUFSIZE;
+  size_t nbBytesToRead = 0;
+  size_t nbBytesRead = 0;
+  int i = 0;
 
-  maxBytes = MAX_LENGTH - *f_ops;
+  printk(KERN_WARNING "(%s:%s:%u)\n", __FILE__, __FUNCTION__, __LINE__);
 
-  if(maxBytes > count)
-    nbBytesToRead = count;
-  else
-    nbBytesToRead = maxBytes;
+  maxBytes = maxBytes - *offp;
 
-  if(nbBytesToRead == 0)
+  if((filp->f_flags & O_ACCMODE) == O_RDONLY || (filp->f_flags & O_ACCMODE) == O_RDWR)
   {
-    printk(KERN_ALERT "Reached end of device\n");
-    return -ENOSPC;
+    if(count > maxBytes)
+      nbBytesToRead = maxBytes;
+    else
+      nbBytesToRead = count;
+
+    if(count < 0)
+    {
+      printk(KERN_ALERT "count < 0\n");
+      count = 0;
+    }
+
+    for(i = 0; i < nbBytesToRead; ++i)
+    {
+      if(down_interruptible(&dev->bufferSem))
+        return -ERESTARTSYS;
+      if(circularBufferOut(dev->cirBuffer, dev->readBuffer + i) == 0)
+        ++nbBytesRead;
+      else
+      {
+        count = 0;
+        i = nbBytesToRead;
+      }
+      up(&dev->bufferSem);
+
+      printk(KERN_WARNING "Reading byte %d of value %d\n", i, dev->readBuffer[i]);
+    }
+
+    copy_to_user(ubuf, dev->readBuffer, nbBytesRead);
+    *offp += nbBytesRead;
+
+    printk(KERN_WARNING "%s has read this from the device : %s\n", __FUNCTION__, dev->readBuffer);
   }
+  else
+    return -EACCES;
 
-  nbBytesLeft = nbBytesToRead - copy_to_user(ubuf, buffer + *f_ops, nbBytesToRead);
-  *f_ops += nbBytesLeft;
-
-  printk(KERN_WARNING "%s has read this from the device : %s\n", __FUNCTION__, buffer);
-
-  return nbBytesLeft;
+  return nbBytesRead;
 }
 
-static ssize_t charDriver_write(struct file *filp, const char __user *ubuf, size_t count, loff_t *f_ops)
+static ssize_t charDriver_write(struct file *filp, const char __user *ubuf, size_t count, loff_t *offp)
 {
-  int nbBytesLeft;
-  int nbBytesToWrite;
-  int maxBytes;
+  struct charDriverDev *dev = filp->private_data;
 
-  maxBytes = MAX_LENGTH - *f_ops;
+  size_t maxBytes = READWRITE_BUFSIZE;
+  size_t nbBytesToWrite = 0;
+  size_t nbBytesWrite = 0;
+  int i = 0;
 
-  if(maxBytes > count)
-    nbBytesToWrite = count;
-  else
-    nbBytesToWrite = maxBytes;
-
-
-  if(nbBytesToWrite == 0)
+  if((filp->f_flags & O_ACCMODE) == O_WRONLY || (filp->f_flags & O_ACCMODE) == O_RDWR)
   {
-    printk(KERN_ALERT "Reached end of device\n");
-    return -ENOSPC;
+    maxBytes = READWRITE_BUFSIZE - *offp;
+
+    if(count > maxBytes)
+      nbBytesToWrite = maxBytes;
+    else
+      nbBytesToWrite = count;
+
+    if(count < 0)
+    {
+      printk(KERN_ALERT "count < 0\n");
+      count = 0;
+    }
+    if(down_interruptible(&dev->bufferSem))
+      return -ERESTARTSYS;
+    copy_from_user(dev->writeBuffer + i, ubuf, nbBytesToWrite);
+    up(&dev->bufferSem);
+    for(i = 0; i < nbBytesToWrite; ++i)
+        {
+          if(down_interruptible(&dev->bufferSem))
+            return -ERESTARTSYS;
+          if(circularBufferIn(dev->cirBuffer, dev->writeBuffer[i]) == 0)
+            ++nbBytesWrite;
+          else
+          {
+            count = 0;
+            i = nbBytesToWrite;
+          }
+          up(&dev->bufferSem);
+
+          printk(KERN_WARNING "Writing byte %d of value %d\n", i, dev->writeBuffer[i]);
+        }
+
+    *offp += nbBytesWrite;
   }
+  else
+    return -EACCES;
 
-  nbBytesLeft = nbBytesToWrite - copy_from_user(buffer + *f_ops, ubuf, nbBytesToWrite);
-  *f_ops += nbBytesLeft;
+  printk(KERN_WARNING "%s has put this to the device : %s\n", __FUNCTION__, dev->writeBuffer);
 
-  printk(KERN_WARNING "%s has put this to the device : %s\n", __FUNCTION__, buffer);
-
-  return nbBytesLeft;
+  return nbBytesWrite;
 }
 
 /*
