@@ -8,15 +8,34 @@
 int main()
 {
   int charDriver;
-  int charDriver2;
-  char bufferOut[8] = "Francis";
-  char bufferIn[8];
+  char bufferIn[32];
+  char bufferOut[32] = "Hello WorldHello WorldHello Worl";
   int ret;
   
-  charDriver = open("/dev/etsele_cdev", O_WRONLY);
-  
-  ret = write(charDriver, bufferOut, 8); 
-  
+  charDriver = open("/dev/etsele_cdev", O_RDWR);
+
+  ret = write(charDriver, bufferOut, 5);
+  if(ret < 0)
+    return ret; 
+  ret = read(charDriver, bufferIn, 4);
+  if(ret < 0)
+    return ret; 
+  ret = read(charDriver, bufferIn, 1);
+  if(ret < 0)
+    return ret; 
+  ret = write(charDriver, bufferOut, 32);  
+  if(ret < 0)
+    return ret;  
+  ret = read(charDriver, bufferIn, 11);
+  if(ret < 0)
+    return ret; 
+  ret = read(charDriver, bufferIn, 11);
+  if(ret < 0)
+    return ret; 
+  ret = read(charDriver, bufferIn, 11);
+  if(ret < 0)
+    return ret; 
+
   close(charDriver);
 
 	return ret;
