@@ -11,6 +11,12 @@
 #include <linux/kernel.h>
 #include <asm/atomic.h>
 #include <linux/types.h>
+#include <linux/wait.h>
+#include <linux/sched.h>
+#include <uapi/asm-generic/fcntl.h>
+#include <linux/fcntl.h>
+#include <linux/spinlock.h>
+#include <linux/semaphore.h>
 
 int charDriverMajor;
 int charDriverMinor;

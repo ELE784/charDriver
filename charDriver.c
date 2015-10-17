@@ -13,14 +13,10 @@
 #include <linux/slab.h>
 #include <linux/errno.h>
 #include <uapi/asm-generic/errno-base.h>
-#include <linux/sched.h>
-#include <uapi/asm-generic/fcntl.h>
-#include <linux/fcntl.h>
-#include <linux/wait.h>
-#include <linux/spinlock.h>
-#include <linux/semaphore.h>
 #include <linux/device.h>
 #include <asm/uaccess.h>
+#include <linux/wait.h>
+#include <linux/sched.h>
 #include <uapi/asm-generic/ioctl.h>
 #include "circularBuffer.h"
 #include "charDriver.h"
@@ -91,6 +87,8 @@ static int __init charDriver_init(void)
     unregister_chrdev_region(devNumber, 1);
   }
 
+  init_waitqueue_head(&charDriver.readWq);
+  init_waitqueue_head(&charDriver.writeWq);
   atomic_set(&charDriver.numWriter, 1);
   //atomicTest = atomic_read(&charDriver.numWriter);
   //printk(KERN_WARNING "charDriver numWriter = %d\n", atomicTest);
@@ -116,7 +114,11 @@ static int __init charDriver_init(void)
   if (cdev_add(&charDriver.cdev, devNumber, 1) < 0)
     printk(KERN_WARNING"charDriver ERROR IN cdev_add (%s:%s:%u)\n", __FILE__, __FUNCTION__, __LINE__);
 
-  printk(KERN_WARNING "Device initialized\n");
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "                Device initialized\n");
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "====================================================\n");
 
   return 0;
 }
@@ -167,7 +169,7 @@ static int charDriver_open(struct inode *inode, struct file *filp)
 
   if((filp->f_flags & O_ACCMODE) == O_WRONLY)
   {
-    //printk(KERN_ALERT "charDriver try to open as a writer\n");
+    // charDriver try to open as a writer
     if(!atomic_dec_and_test(&dev->numWriter))
       goto fail;
     up(&dev->countSem);
@@ -175,12 +177,13 @@ static int charDriver_open(struct inode *inode, struct file *filp)
   }
   else if((filp->f_flags & O_ACCMODE) == O_RDONLY)
   {
-    //printk(KERN_ALERT "charDriver try to open as a reader\n");
+    // charDriver try to open as a reader
     if(atomic_dec_and_test(&dev->numWriter))
     {
       atomic_inc(&dev->numWriter);
       ++(dev->numReader);
       printk(KERN_ALERT "charDriver is open as a reader\n");
+      printk(KERN_ALERT "charDriver have %d reader\n", dev->numReader);
     }
     else
       goto fail;
@@ -188,7 +191,7 @@ static int charDriver_open(struct inode *inode, struct file *filp)
   }
   else if((filp->f_flags & O_ACCMODE) == O_RDWR)
   {
-    //printk(KERN_ALERT "charDriver try to open as a reader/writer\n");
+    // charDriver try to open as a reader/writer
     if(!atomic_dec_and_test(&dev->numWriter))
       goto fail;
     ++(dev->numReader);
@@ -208,7 +211,7 @@ static int charDriver_open(struct inode *inode, struct file *filp)
   return 0;
 
   fail:
-  up(&dev->bufferSem);
+  up(&dev->countSem);
   printk(KERN_ALERT "fail to open charDriver\n");
   return -ENOTTY;
 
@@ -234,8 +237,6 @@ static int charDriver_release(struct inode *inode, struct file *filp)
       return -ERESTARTSYS;
   }
 
-
-
   if((filp->f_flags & O_ACCMODE) == O_WRONLY)
   {
     //printk(KERN_ALERT "charDriver try to release as a writer\n");
@@ -252,7 +253,7 @@ static int charDriver_release(struct inode *inode, struct file *filp)
   }
   else if((filp->f_flags & O_ACCMODE) == O_RDWR)
   {
-    //printk(KERN_ALERT "charDriver try to release as a reader/writer\n");
+    //charDriver try to release as a reader/writer
     atomic_inc(&dev->numWriter);
     --(dev->numReader);
     up(&dev->countSem);
@@ -282,54 +283,84 @@ static ssize_t charDriver_read(struct file *filp, char __user *ubuf, size_t coun
   int i = 0;
 
   printk(KERN_WARNING "FUNCTION READ\n");
-  printk(KERN_WARNING "offp = %d\n", *offp);
 
   if((filp->f_flags & O_ACCMODE) == O_RDONLY || (filp->f_flags & O_ACCMODE) == O_RDWR)
   {
     if(count < 0)
       return -EFAULT;
 
-    if(down_interruptible(&dev->bufferSem))
-      return -ERESTARTSYS;
+    if(count >= READWRITE_BUFSIZE)
+      count = READWRITE_BUFSIZE;
 
-    if(*offp >= CIRCULAR_BUFFER_SIZE)
+    printk(KERN_WARNING "Number of bytes to read = %zu\n", count);
+
+    if(filp->f_flags & O_NONBLOCK)
     {
-      *offp = CIRCULAR_BUFFER_SIZE;
-      return 0;
+      if(down_trylock(&dev->bufferSem))
+        return -EAGAIN;
+    }
+    else
+    {
+      if(down_interruptible(&dev->bufferSem))
+        return -ERESTARTSYS;
     }
 
-    if(*offp + count > CIRCULAR_BUFFER_SIZE)
-      count = CIRCULAR_BUFFER_SIZE - *offp;
-
-    printk(KERN_WARNING "nbBytesToRead = %zu\n", count);
-
-    for(i = count; i > 0; --i)
+    for(i = 0; i < count; ++i)
     {
       if(circularBufferOut(dev->cirBuffer, dev->readBuffer + i) == 0)
+      {
+        printk(KERN_WARNING "Reading byte %d of value %c\n", i, dev->readBuffer[i]);
         ++nbBytesRead;
+        wake_up(&dev->writeWq);
+      }
       else
       {
-        printk(KERN_WARNING "Buffer Empty");
-        *offp -= nbBytesRead;
-        printk(KERN_WARNING "offp = %d\n", *offp);
-        return -ENOMEM;
+        printk(KERN_WARNING "Buffer Empty\n");
+        while(circularBufferDataCount(dev->cirBuffer) == 0)
+        {
+          up(&dev->bufferSem);
+          if(filp->f_flags & O_NONBLOCK)
+            return -EAGAIN;
+//          if(filp->f_flags & O_RDWR)
+//          {
+//            if(down_interruptible(&dev->countSem))
+//              return -ERESTARTSYS;
+//            atomic_inc(&dev->numWriter);
+//            up(&dev->countSem);
+//            printk(KERN_ALERT "charDriver have release as a writer\n");
+//          }
+          if(wait_event_interruptible(dev->readWq, circularBufferDataCount(dev->cirBuffer) > 0))
+            return -ERESTARTSYS;
+//          if(filp->f_flags & O_RDWR)
+//          {
+//            if(down_interruptible(&dev->countSem))
+//              return -ERESTARTSYS;
+//            if(!atomic_dec_and_test(&dev->numWriter))
+//              goto fail;
+//            up(&dev->countSem);
+//            printk(KERN_ALERT "charDriver is open as a writer\n");
+//          }
+          down_interruptible(&dev->bufferSem);
+        }
+        --i;
       }
-      printk(KERN_WARNING "Reading byte %d of value %c\n", i, dev->readBuffer[i]);
     }
 
     bufferDataCount = circularBufferDataCount(dev->cirBuffer);
-    printk(KERN_WARNING "Number of bytes in circular buffer = %d", bufferDataCount);
+    printk(KERN_WARNING "Number of bytes in circular buffer = %u\n", bufferDataCount);
 
     copy_to_user(ubuf, dev->readBuffer, nbBytesRead);
     up(&dev->bufferSem);
-    *offp -= nbBytesRead;
-    //printk(KERN_WARNING "%s has read this from the device : %s\n", __FUNCTION__, dev->readBuffer);
   }
   else
     return -EACCES;
 
-  printk(KERN_WARNING "offp = %d\n", *offp);
   return nbBytesRead;
+
+//  fail:
+//  up(&dev->countSem);
+//  printk(KERN_ALERT "fail to open charDriver\n");
+//  return -ENOTTY;
 }
 
 static ssize_t charDriver_write(struct file *filp, const char __user *ubuf, size_t count, loff_t *offp)
@@ -340,7 +371,6 @@ static ssize_t charDriver_write(struct file *filp, const char __user *ubuf, size
   int i = 0;
 
   printk(KERN_WARNING "FUNCTION WRITE\n");
-  printk(KERN_WARNING "offp = %d\n", *offp);
 
   if((filp->f_flags & O_ACCMODE) == O_WRONLY || (filp->f_flags & O_ACCMODE) == O_RDWR)
   {
@@ -350,40 +380,70 @@ static ssize_t charDriver_write(struct file *filp, const char __user *ubuf, size
     if(count >= READWRITE_BUFSIZE)
       count = READWRITE_BUFSIZE;
 
-    printk(KERN_WARNING "nbBytesToWrite = %zu\n", count);
+    printk(KERN_WARNING "Number of bytes to write = %zu\n", count);
 
-    if(down_interruptible(&dev->bufferSem))
-      return -ERESTARTSYS;
+    if(filp->f_flags & O_NONBLOCK)
+    {
+      if(down_trylock(&dev->bufferSem))
+        return -EAGAIN;
+    }
+    else
+    {
+      if(down_interruptible(&dev->bufferSem))
+        return -ERESTARTSYS;
+    }
 
     copy_from_user(dev->writeBuffer, ubuf, count);
 
-    for(i = *offp; i < *offp + count; ++i)
+    for(i = 0; i < count; ++i)
     {
       if(circularBufferIn(dev->cirBuffer, dev->writeBuffer[i]) == 0)
+      {
+        printk(KERN_WARNING "Writing byte %d of value %c\n", i, dev->writeBuffer[i]);
         ++nbBytesWrite;
+        wake_up(&dev->readWq);
+      }
       else
       {
-        printk(KERN_WARNING "Buffer Full");
-        *offp += nbBytesWrite;
-        return -ENOMEM;
+        printk(KERN_WARNING "Buffer Full\n");
+        while(circularBufferDataCount(dev->cirBuffer) == CIRCULAR_BUFFER_SIZE)
+        {
+          up(&dev->bufferSem);
+          if(filp->f_flags & O_NONBLOCK)
+            return -EAGAIN;
+          if(down_interruptible(&dev->countSem))
+            return -ERESTARTSYS;
+          atomic_inc(&dev->numWriter);
+          up(&dev->countSem);
+          printk(KERN_ALERT "charDriver have release as a writer\n");
+          if(wait_event_interruptible(dev->writeWq, circularBufferDataCount(dev->cirBuffer) < CIRCULAR_BUFFER_SIZE))
+            return -ERESTARTSYS;
+          if(down_interruptible(&dev->countSem))
+            return -ERESTARTSYS;
+          if(!atomic_dec_and_test(&dev->numWriter))
+            goto fail;
+          up(&dev->countSem);
+          printk(KERN_ALERT "charDriver is open as a writer\n");
+          down_interruptible(&dev->bufferSem);
+        }
+        --i;
       }
-      printk(KERN_WARNING "Writing byte %d of value %c\n", i, dev->writeBuffer[i]);
     }
 
     bufferDataCount = circularBufferDataCount(dev->cirBuffer);
-    printk(KERN_WARNING "Number of bytes in circular buffer = %d", bufferDataCount);
+    printk(KERN_WARNING "Number of bytes in circular buffer = %d\n", bufferDataCount);
 
     up(&dev->bufferSem);
-    *offp += nbBytesWrite;
   }
   else
     return -EACCES;
 
-  //printk(KERN_WARNING "%s has put this to the device : %s\n", __FUNCTION__, dev->writeBuffer);
-
-  printk(KERN_WARNING "offp = %d\n", *offp);
-
   return nbBytesWrite;
+
+  fail:
+  up(&dev->countSem);
+  printk(KERN_ALERT "fail to open charDriver\n");
+  return -ENOTTY;
 }
 
 /*

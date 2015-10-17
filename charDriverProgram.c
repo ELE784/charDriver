@@ -17,24 +17,31 @@ int main()
   ret = write(charDriver, bufferOut, 5);
   if(ret < 0)
     return ret; 
+  printf("%d bytes write\n", ret);
   ret = read(charDriver, bufferIn, 4);
   if(ret < 0)
     return ret; 
+  printf("%d bytes read\n", ret);
   ret = read(charDriver, bufferIn, 1);
   if(ret < 0)
     return ret; 
+  printf("%d bytes read\n", ret);
   ret = write(charDriver, bufferOut, 32);  
   if(ret < 0)
     return ret;  
+  printf("%d bytes write\n", ret);
   ret = read(charDriver, bufferIn, 11);
   if(ret < 0)
     return ret; 
+  printf("%d bytes read\n", ret);
   ret = read(charDriver, bufferIn, 11);
   if(ret < 0)
     return ret; 
+  printf("%d bytes read\n", ret);
   ret = read(charDriver, bufferIn, 11);
   if(ret < 0)
     return ret; 
+  printf("%d bytes read\n", ret);
 
   close(charDriver);
 
