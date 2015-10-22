@@ -17,6 +17,7 @@
 #include <linux/fcntl.h>
 #include <linux/spinlock.h>
 #include <linux/semaphore.h>
+#include <uapi/asm-generic/ioctl.h>
 
 int charDriverMajor;
 int charDriverMinor;

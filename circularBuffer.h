@@ -32,6 +32,8 @@ int circularBufferResize(BufferHandle_t handle, unsigned int newSize);
 int circularBufferIn(BufferHandle_t handle, char data);
 int circularBufferOut(BufferHandle_t handle, char *data);
 unsigned int circularBufferDataCount(BufferHandle_t handle);
+unsigned int circularBufferDataSize(BufferHandle_t handle);
+unsigned int circularBufferDataRemaining(BufferHandle_t handle);
 
 
 #endif /* CIRCULAR_BUFFER_H_ */

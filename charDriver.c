@@ -17,9 +17,9 @@
 #include <asm/uaccess.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
-#include <uapi/asm-generic/ioctl.h>
 #include "circularBuffer.h"
 #include "charDriver.h"
+#include "cmd.h"
 
 // Driver constants
 #define MAJOR_NUMBER 0
@@ -321,25 +321,25 @@ static ssize_t charDriver_read(struct file *filp, char __user *ubuf, size_t coun
           up(&dev->bufferSem);
           if(filp->f_flags & O_NONBLOCK)
             return -EAGAIN;
-//          if(filp->f_flags & O_RDWR)
-//          {
-//            if(down_interruptible(&dev->countSem))
-//              return -ERESTARTSYS;
-//            atomic_inc(&dev->numWriter);
-//            up(&dev->countSem);
-//            printk(KERN_ALERT "charDriver have release as a writer\n");
-//          }
+          //          if(filp->f_flags & O_RDWR)
+          //          {
+          //            if(down_interruptible(&dev->countSem))
+          //              return -ERESTARTSYS;
+          //            atomic_inc(&dev->numWriter);
+          //            up(&dev->countSem);
+          //            printk(KERN_ALERT "charDriver have release as a writer\n");
+          //          }
           if(wait_event_interruptible(dev->readWq, circularBufferDataCount(dev->cirBuffer) > 0))
             return -ERESTARTSYS;
-//          if(filp->f_flags & O_RDWR)
-//          {
-//            if(down_interruptible(&dev->countSem))
-//              return -ERESTARTSYS;
-//            if(!atomic_dec_and_test(&dev->numWriter))
-//              goto fail;
-//            up(&dev->countSem);
-//            printk(KERN_ALERT "charDriver is open as a writer\n");
-//          }
+          //          if(filp->f_flags & O_RDWR)
+          //          {
+          //            if(down_interruptible(&dev->countSem))
+          //              return -ERESTARTSYS;
+          //            if(!atomic_dec_and_test(&dev->numWriter))
+          //              goto fail;
+          //            up(&dev->countSem);
+          //            printk(KERN_ALERT "charDriver is open as a writer\n");
+          //          }
           down_interruptible(&dev->bufferSem);
         }
         --i;
@@ -357,10 +357,10 @@ static ssize_t charDriver_read(struct file *filp, char __user *ubuf, size_t coun
 
   return nbBytesRead;
 
-//  fail:
-//  up(&dev->countSem);
-//  printk(KERN_ALERT "fail to open charDriver\n");
-//  return -ENOTTY;
+  //  fail:
+  //  up(&dev->countSem);
+  //  printk(KERN_ALERT "fail to open charDriver\n");
+  //  return -ENOTTY;
 }
 
 static ssize_t charDriver_write(struct file *filp, const char __user *ubuf, size_t count, loff_t *offp)
@@ -452,7 +452,61 @@ static ssize_t charDriver_write(struct file *filp, const char __user *ubuf, size
 
 static long charDriver_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-  return 0;
+  struct charDriverDev *dev = filp->private_data;
+  int temp = 0;
+  int error = 0;
+  int retval = 0;
+
+  if(_IOC_TYPE(cmd) != CHARDRIVER_IOC_MAGIC)
+    return -ENOTTY;
+  if(_IOC_NR(cmd) > CHARDRIVER_IOC_MAXNR)
+    return -ENOTTY;
+
+  if(_IOC_DIR(cmd) & _IOC_READ)
+    error = !access_ok(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
+  else if(_IOC_DIR(cmd) & _IOC_WRITE)
+    error =  !access_ok(VERIFY_READ, (void __user *)arg, _IOC_SIZE(cmd));
+  if(error)
+    return -EFAULT;
+
+  if(down_interruptible(&dev->bufferSem))
+    return -ERESTARTSYS;
+
+  switch(cmd){
+  case CHARDRIVER_IOCGETNUMDATA:
+    temp = circularBufferDataCount(dev->cirBuffer);
+    if(__put_user(temp, (int __user *)arg))
+      goto fail;
+    break;
+  case CHARDRIVER_IOCGETNUMREADER:
+    temp = dev->numReader;
+    if(__put_user(temp, (int __user *)arg))
+      goto fail;
+    break;
+  case CHARDRIVER_IOCGETBUFFERSIZE:
+    temp = circularBufferDataSize(dev->cirBuffer);
+    if(__put_user(temp, (int __user *)arg))
+      goto fail;
+    break;
+  case CHARDRIVER_IOCSETBUFFERSIZE:
+    if (!capable(CAP_SYS_ADMIN))
+    {
+      return -EPERM;
+    }
+    if(__get_user(temp, (int __user *)arg))
+      goto fail;
+    circularBufferResize(dev->cirBuffer, temp);
+    break;
+  default:
+    up(&charDriver.bufferSem);
+    return -ENOTTY;
+  }
+  up(&charDriver.bufferSem);
+  return retval;
+
+  fail:
+  up(&charDriver.bufferSem);
+  return -EFAULT;
 }
 
 // Init and Exit functions
