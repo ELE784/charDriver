@@ -12,6 +12,7 @@
         #define NULL ((void *)0)
     #endif
     #include <linux/slab.h> // kmalloc() & kfree()
+    #include <linux/string.h>
 #else
     #include <stdio.h>
     #include <stdlib.h>
@@ -24,7 +25,7 @@
 #define BUFFER_ERROR -3
 
 // Buffer Handle type
-typedef void* BufferHandle_t;
+typedef void *BufferHandle_t;
 
 BufferHandle_t circularBufferInit(unsigned int size);
 int circularBufferDelete(BufferHandle_t handle);

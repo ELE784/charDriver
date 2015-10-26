@@ -15,7 +15,6 @@ typedef struct {
   char* bufferData;
 } Buffer_t;
 
-
 BufferHandle_t circularBufferInit(unsigned int size) {
   Buffer_t* newBuffer = NULL;
   // Allocate memory for main structure
@@ -76,36 +75,45 @@ int circularBufferDelete(BufferHandle_t handle) {
 
 
 int circularBufferResize(BufferHandle_t handle, unsigned int newSize) {
-  Buffer_t* buffer = (Buffer_t*) handle;
-  unsigned int tempIn = 0;
-  unsigned int tempOut = 0;
-  char* tempData;
+  Buffer_t *buffer = (Buffer_t *)handle;
+  unsigned int tempIn = buffer->inIndex;
+  unsigned int tempOut = buffer->outIndex;
+  unsigned int bufSize= buffer->size;
+  char *bufferData;
+
+  bufferData = (char*) kmalloc(sizeof(char) * newSize, GFP_KERNEL);
+
+  if(buffer == NULL)
+  {
+    kfree(bufferData);
+    return BUFFER_ERROR;
+  }
+
+  strncpy(bufferData, buffer->bufferData, bufSize);
 
   if(circularBufferDataCount(buffer) < newSize)
   {
-    tempIn = buffer->inIndex;
-    tempOut = buffer->outIndex;
-    tempData = buffer->bufferData;
-
     circularBufferDelete(buffer);
     buffer = circularBufferInit(newSize);
     buffer->inIndex = tempIn;
     buffer->outIndex = tempOut;
-    buffer->bufferData = tempData;
+    strncpy(buffer->bufferData, bufferData, bufSize);
   }
   else
   {
+    kfree(bufferData);
     return BUFFER_ERROR;
   }
 
   if(buffer == NULL)
+  {
+    kfree(bufferData);
     return BUFFER_ERROR;
+  }
 
-  handle = (BufferHandle_t)buffer;
-
+  kfree(bufferData);
   return BUFFER_OK;
 }
-
 
 int circularBufferIn(BufferHandle_t handle, char data) {
   Buffer_t* buffer = (Buffer_t*) handle;
@@ -121,7 +129,6 @@ int circularBufferIn(BufferHandle_t handle, char data) {
   return BUFFER_OK;
 }
 
-
 int circularBufferOut(BufferHandle_t handle, char *data) {
   Buffer_t* buffer = (Buffer_t*) handle;
   if (buffer->empty) {
@@ -135,7 +142,6 @@ int circularBufferOut(BufferHandle_t handle, char *data) {
   }
   return BUFFER_OK;
 }
-
 
 unsigned int circularBufferDataCount(BufferHandle_t handle) {
   Buffer_t* buffer = (Buffer_t*) handle;
@@ -154,7 +160,6 @@ unsigned int circularBufferDataSize(BufferHandle_t handle) {
   Buffer_t* buffer = (Buffer_t*) handle;
   return buffer->size;
 }
-
 
 unsigned int circularBufferDataRemaining(BufferHandle_t handle) {
   Buffer_t* buffer = (Buffer_t*) handle;

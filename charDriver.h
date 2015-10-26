@@ -1,8 +1,9 @@
 /*
- * charDriver.h
+ * File         : charDriver.h
+ * Description  : ELE784 Lab1 source
  *
- *  Created on: Oct 8, 2015
- *      Author: bullshark
+ * Etudiants:  MASF05089000 (Francis Masse)
+ *             LEBA23057609 (Alexandre Leblanc)
  */
 
 #ifndef CHARDRIVER_H_

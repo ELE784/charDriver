@@ -3,8 +3,13 @@
 # Usage ./script_lab1 [ --quit | --read | --write ]
 
 if [ "$1" == "" ]; then
+  make  
+  sleep 10
 	sudo insmod ./ele784-lab1.ko
 	sudo chmod 666 /dev/etsele_cdev
+  sudo gcc charDriverWrite.c -o write.out
+  sudo gcc charDriverRead.c -o read.out
+  sudo gcc charDriverIoctl.c -o ioctl.out
 fi
 
 while [ "$1" != "" ]; do
