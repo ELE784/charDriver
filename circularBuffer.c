@@ -83,6 +83,11 @@ int circularBufferResize(BufferHandle_t handle, unsigned int newSize) {
 
   bufferData = (char*) kmalloc(sizeof(char) * newSize, GFP_KERNEL);
 
+  if(bufferData == NULL)
+  {
+    return BUFFER_ERROR;
+  }
+  
   if(buffer == NULL)
   {
     kfree(bufferData);
